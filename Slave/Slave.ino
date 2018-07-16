@@ -89,5 +89,6 @@ void checkSensor()
   if (digitalRead(SensorIrPin) == LOW && protectHoldSensorIR == false)
   {
     
+    protectHoldSensorIR = true;
   }
 }
