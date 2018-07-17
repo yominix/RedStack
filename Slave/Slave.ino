@@ -1,6 +1,12 @@
 #include <SoftwareSerial.h>
 
-//////----------------พื้นที่สำหรับกำหนดค่าคงที่--------------------------//////
+/*----------------( Constant variable )--------------------------*/
+
+#define ad1RS485 A7
+#define ad2RS485 A0
+#define ad3RS485 A1
+#define ad4RS485 A2
+#define ad5RS485 A3
 
 #define RS485Recieve LOW
 #define RS485Transmit HIGH
@@ -16,29 +22,37 @@
 #define SolenoidPin 2
 #define StatusLightPin LED_BUILTIN
 
-//////---------------พื้นที่สำหรับประกาศ object-------------------------////////
+/*--------------------( define objects )--------------------------*/
 
 SoftwareSerial RS485serial(RxPin, TxPin); // RX, TX
 
-//////----------------พื้นที่สำหรับตัวแปรที่ใช้ร่วมกัน-----------------------///////
+/*--------------------( Share variable )--------------------------*/
+
 typedef struct shareStatus
 {
+  uint8_t slaveAddress_unit8;
   uint8_t newMail_uint8;
   uint8_t openByKey_uint8;
-  bool openBox_bool;
-  bool openBoxAlert_bool;
+  bool boxOpen_bool;
+  bool boxOpenAlert_bool;
 };
-shareStatus shareDataRS485 = {12, 15, true, false};
+shareStatus shareDataRS485 = {0, 0, 0, false, false};
 
 String inputString = "";        // a String to hold incoming data
 boolean stringComplete = false; // whether the string is complete
 bool protectHoldSensorIR = false;
+bool protectHoldKeyswitch = false;
+bool protectChangeStatusMagnetic = false;
+bool alertBoxOpen = false;
+unsigned long timeAlert = 5000; // = 180,000 ms = 180 s = 3 minute
+unsigned long lastTimeCheckBoxOpen = 0;
 
-//////--------------------Setup---------------------------------/////////
+/*--------------------( Setup )--------------------------*/
+
 void setup()
 {
   Serial.begin(9600);
-  Serial.println("Goodnight moon!");
+  Serial.println("################## Debug ###################\n");
 
   pinMode(SensorIrPin, INPUT);
   pinMode(KeyswitchPin, INPUT);
@@ -51,13 +65,21 @@ void setup()
   digitalWrite(TxControlPin, RS485Recieve);
   RS485serial.begin(BaudrateRS485);
   inputString.reserve(200);
-  char buffer[12];
-  sprintf(buffer, "^%d,%02d%02d%02d:", shareDataRS485.newMail_uint8, shareDataRS485.openByKey_uint8, shareDataRS485.openBox_bool, shareDataRS485.openBoxAlert_bool);
-  Serial.println(String(buffer));
+
+  Serial.print("#Get slave address = ");
+  shareDataRS485.slaveAddress_unit8 = getAddress();
+  Serial.println(String(shareDataRS485.slaveAddress_unit8));
+
+  //   char buffer[12];
+  //   sprintf(buffer, "^%d,%02d%02d%02d:", shareDataRS485.newMail_uint8, shareDataRS485.openByKey_uint8, shareDataRS485.openBox_bool, shareDataRS485.openBoxAlert_bool);
+  //   Serial.println(String(buffer));
 }
-//////--------------------Loop---------------------------------/////////
+
+/*--------------------( Loop )--------------------------*/
+
 void loop()
 { // run over and over
+  updateSensor();
   serialEvent();
   if (stringComplete)
   {
@@ -67,12 +89,39 @@ void loop()
   }
 }
 
-///////-------------------Functions--------------------------------////////
+/*--------------------( Functions )--------------------------*/
+
+uint8_t getAddress()
+{
+  uint8_t address = 0;
+  if (digitalRead(ad1RS485) == LOW)
+  {
+    address += 1;
+  }
+  if (digitalRead(ad2RS485) == LOW)
+  {
+    address += 2;
+  }
+  if (digitalRead(ad3RS485) == LOW)
+  {
+    address += 4;
+  }
+  if (digitalRead(ad4RS485) == LOW)
+  {
+    address += 8;
+  }
+  if (digitalRead(ad5RS485) == LOW)
+  {
+    address += 16;
+  }
+  return address;
+}
+
 void serialEvent()
 {
-  while (Serial.available())
+  while (RS485serial.available())
   {
-    char inChar = (char)Serial.read();
+    char inChar = (char)RS485serial.read();
     if (inChar == '\n')
     {
       stringComplete = true;
@@ -82,13 +131,71 @@ void serialEvent()
   }
 }
 
-void checkSensor()
+void updateSensor()
 {
+  /*--------------------( Sensor IR )--------------------------*/
   if (digitalRead(SensorIrPin) == HIGH && protectHoldSensorIR == true)
     protectHoldSensorIR = false;
   if (digitalRead(SensorIrPin) == LOW && protectHoldSensorIR == false)
   {
-    
+    if (shareDataRS485.newMail_uint8 < 99)
+    {
+      shareDataRS485.newMail_uint8 += 1;
+    }
     protectHoldSensorIR = true;
+    Serial.println("#Sensor active " + String(shareDataRS485.newMail_uint8));
+    delay(300);
+  }
+  /*--------------------( Key switch )--------------------------*/
+  if (digitalRead(KeyswitchPin) == HIGH && protectHoldKeyswitch == true)
+    protectHoldKeyswitch = false;
+  if (digitalRead(KeyswitchPin) == LOW && protectHoldKeyswitch == false)
+  {
+    if (shareDataRS485.openByKey_uint8 < 99)
+    {
+      shareDataRS485.openByKey_uint8 += 1;
+    }
+    protectHoldKeyswitch = true;
+    Serial.println("#Key switch active " + String(shareDataRS485.openByKey_uint8));
+    delay(300);
+  }
+  /*--------------------( Magnetic )--------------------------*/
+  if (digitalRead(MagneticPin) == LOW)
+  {
+    if (protectChangeStatusMagnetic == false)
+    {
+      Serial.println("#box open");
+      lastTimeCheckBoxOpen = millis();
+      protectChangeStatusMagnetic = true;
+      delay(500);
+    }
+    if (millis() - lastTimeCheckBoxOpen >= timeAlert)
+    {
+      Serial.println("#box open idel");
+      shareDataRS485.boxOpenAlert_bool = true;
+      alertBoxOpen = true;
+      lastTimeCheckBoxOpen = (millis() - timeAlert) + 3000; //check next 10s
+    }
+    shareDataRS485.boxOpen_bool = true;
+  }
+  else if (digitalRead(MagneticPin) == HIGH)
+  {
+    if (protectChangeStatusMagnetic == true)
+    {
+      Serial.println("#box close");
+      protectChangeStatusMagnetic = false;
+      delay(500);
+    }
+    shareDataRS485.boxOpen_bool = false;
+    shareDataRS485.boxOpenAlert_bool = false;
+    alertBoxOpen = false;
+  }
+  if (alertBoxOpen == true)
+  {
+    Serial.print("..Beep");
+    digitalWrite(Buzzerpin, HIGH);
+    delay(250);
+    digitalWrite(Buzzerpin, LOW);
+    delay(250);
   }
 }
