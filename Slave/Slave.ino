@@ -1,4 +1,5 @@
 #include <SoftwareSerial.h>
+#include <Crc16.h>
 
 /*----------------( Constant variable )--------------------------*/
 
@@ -25,6 +26,7 @@
 /*--------------------( define objects )--------------------------*/
 
 SoftwareSerial RS485serial(RxPin, TxPin); // RX, TX
+Crc16 crc;
 
 /*--------------------( Share variable )--------------------------*/
 
@@ -78,57 +80,28 @@ void setup()
 /*--------------------( Loop )--------------------------*/
 
 void loop()
-{ // run over and over
-  updateSensor();
+{
+  // updateSensor();
   serialEvent();
   if (stringComplete)
   {
     Serial.println(inputString);
+    processInput(inputString);
     inputString = "";
     stringComplete = false;
   }
 }
 
 /*--------------------( Functions )--------------------------*/
-
-uint8_t getAddress()
+bool processInput(String input)
 {
-  uint8_t address = 0;
-  if (digitalRead(ad1RS485) == LOW)
-  {
-    address += 1;
-  }
-  if (digitalRead(ad2RS485) == LOW)
-  {
-    address += 2;
-  }
-  if (digitalRead(ad3RS485) == LOW)
-  {
-    address += 4;
-  }
-  if (digitalRead(ad4RS485) == LOW)
-  {
-    address += 8;
-  }
-  if (digitalRead(ad5RS485) == LOW)
-  {
-    address += 16;
-  }
-  return address;
-}
-
-void serialEvent()
-{
-  while (RS485serial.available())
-  {
-    char inChar = (char)RS485serial.read();
-    if (inChar == '\n')
-    {
-      stringComplete = true;
-      break;
-    }
-    inputString += inChar;
-  }
+  bool status = false;
+  String address = input.substring(1, input.indexOf(','));
+  String command = input.substring(input.indexOf(',')+1, input.indexOf(':'));
+  int add = address.toInt();
+  Serial.println(add);
+  Serial.println(command);
+  return status;
 }
 
 void updateSensor()
@@ -198,4 +171,72 @@ void updateSensor()
     digitalWrite(Buzzerpin, LOW);
     delay(250);
   }
+}
+
+uint8_t getAddress()
+{
+  uint8_t address = 0;
+  if (digitalRead(ad1RS485) == LOW)
+  {
+    address += 1;
+  }
+  if (digitalRead(ad2RS485) == LOW)
+  {
+    address += 2;
+  }
+  if (digitalRead(ad3RS485) == LOW)
+  {
+    address += 4;
+  }
+  if (digitalRead(ad4RS485) == LOW)
+  {
+    address += 8;
+  }
+  if (digitalRead(ad5RS485) == LOW)
+  {
+    address += 16;
+  }
+  return address;
+}
+
+void serialEvent()
+{
+  while (RS485serial.available())
+  {
+    char inChar = (char)RS485serial.read();
+    if (inChar == '\n')
+    {
+      if (compareCrc(inputString))
+      {
+        Serial.print("Pass CRC : ");
+        stringComplete = true;
+      }
+      else
+      {
+        inputString = "";
+      }
+      break;
+    }
+    inputString += inChar;
+  }
+}
+
+bool compareCrc(String strIn)
+{
+  bool compare = false;
+  crc.clearCrc();
+  String inputCrc = inputString.substring(inputString.indexOf(':') + 1);
+  String payload = inputString.substring(0, inputString.indexOf(':') + 1);
+  char buf[20];
+  payload.toCharArray(buf, payload.length() + 1);
+  for (int i = 0; i <= payload.length(); i++)
+  {
+    crc.updateCrc(buf[i]);
+  }
+  String calCrc = String(crc.getCrc(), HEX);
+  if (calCrc.equalsIgnoreCase(inputCrc))
+  {
+    compare = true;
+  }
+  return compare;
 }
