@@ -1,3 +1,11 @@
+/*
+  function command to box :
+      commandToBox("openbox", port);
+      commandToBox("clear", port);
+      commandToBox("request", port);
+
+      #port = 1 - 30
+*/
 #include <Crc16.h>
 #include <Ethernet.h>
 #include <PubSubClient.h>
@@ -18,8 +26,8 @@
 /*--------------------( define objects )--------------------------*/
 
 Crc16 crc;
-IPAddress server(10, 0, 102, 135);
-//const char* server = "minwinpc";  //name server mqtt broker
+//IPAddress server(172, 18, 9, 157);
+const char* server = "nodereddev.kratos.co.th";  //name server mqtt broker
 EthernetClient ethClient;
 
 /*--------------------( Share variable )--------------------------*/
@@ -43,6 +51,12 @@ bool clearData = false;
 bool statusEthernet = false;
 bool statusMqtt = false;
 bool toggleStatusLight = false;
+bool alltest_open = false;
+unsigned int alltest_open_number = 1;
+unsigned long lastTimeAlltestOpen = 0;
+
+/*********************(test function)********************/
+unsigned long lastTimeToSendStatus = 0;
 
 /*--------------------(Extra functions)------------------*/
 
@@ -78,8 +92,13 @@ void callback(char *topic, byte *payload, unsigned int length)
     if (cmd == "open")
     {
       commandToBox("openbox", port);
-      // publishMqtt("response", port);
+      //      publishMqtt("response", port);
       Serial.println("Open box " + String(port));
+    }
+    else if (cmd == "alltest_open")
+    {
+      alltest_open = true;
+      alltest_open_number = 1;
     }
     else if (_status == "open")
     {
@@ -152,7 +171,7 @@ void setup()
   pinMode(TxControlPin, OUTPUT);
   pinMode(StatusLightPin, OUTPUT);
   digitalWrite(TxControlPin, RS485Recieve);
-  delay(1000);
+  delay(2000);
   initMac();
   sdcardInit();
   connectEthernet();
@@ -161,59 +180,73 @@ void setup()
 }
 
 /*--------------------( Loop )--------------------------*/
-unsigned int nn =  0;
+
 void loop()
 {
-//  Serial.println(nn);
-//  nn++;
-//  delay(1000);
-      if (!statusEthernet)
+  if (!statusEthernet)
+  {
+    blinkEthernetNotConnect();
+  }
+  if (!statusMqtt)
+  {
+    blinkMqttBrokerNotConnect();
+  }
+  if (millis() - lastTimeReconnect >= timeReconnect) //reconnect every 10 sec
+  {
+    Ethernet.maintain();
+    if (ethClient.connected())
+    {
+      statusEthernet = true;
+    }
+    else
+    {
+      statusEthernet = false;
+    }
+    if (!client.connected())
+    {
+      reconnectMqtt();
+    }
+    lastTimeReconnect = millis();
+  }
+
+  serialEvent();
+  if (stringComplete)
+  {
+    Serial.println(inputString + "\n");
+    processInput(inputString);
+    inputString = "";
+    stringComplete = false;
+  }
+  if (alltest_open && (millis() - lastTimeAlltestOpen >= 900))
+  {
+    if (alltest_open_number >= 30)
+    {
+      alltest_open = false;
+    }
+    commandToBox("openbox", alltest_open_number);
+    alltest_open_number++;
+    lastTimeAlltestOpen = millis();
+  }
+  else if(!alltest_open)
+  {
+    if (clearData == false)
+    {
+      if (numberOfSlave > amountSlave)
       {
-        blinkEthernetNotConnect();
+        numberOfSlave = 1;
       }
-      if (!statusMqtt)
-      {
-        blinkMqttBrokerNotConnect();
-      }
-      if (millis() - lastTimeReconnect >= timeReconnect) //reconnect every 10 sec
-      {
-        Ethernet.maintain();
-        if (ethClient.connected())
-        {
-          statusEthernet = true;
-        }
-        else
-        {
-          statusEthernet = false;
-        }
-        if (!client.connected())
-        {
-          reconnectMqtt();
-        }
-        lastTimeReconnect = millis();
-      }
-  
-      serialEvent();
-      if (stringComplete)
-      {
-        Serial.println(inputString + "\n");
-        processInput(inputString);
-        inputString = "";
-        stringComplete = false;
-      }
-      if (clearData == false)
-      {
-        if (numberOfSlave > amountSlave)
-        {
-          // delay(5000);
-          numberOfSlave = 1;
-        }
-  
-        commandToBox("request", addressSlave[numberOfSlave]);
-        numberOfSlave++;
-      }
-      client.loop();
-      delay(100);
+
+      commandToBox("request", addressSlave[numberOfSlave]);
+      numberOfSlave++;
+    }
+  }
+  if(millis()-lastTimeToSendStatus>=60000)
+  {
+    publishMqtt("statusBox",0);
+    lastTimeToSendStatus=millis();
+  }
+  client.loop();
+  delay(50);
 }
 
 /*--------------------<<<( Functions )>>>-------------------------*/
@@ -227,7 +260,7 @@ void initSlave()
   {
     addressSlave[i] = 0;
   }
-  amountSlave = checkAmountSlave();                           //นับจำนวนบอร์ดลูก
+  amountSlave = checkAmountSlave(); //นับจำนวนบอร์ดลูก
   Serial.println("Amount Slave = " + String(amountSlave));
   for (int i = 1; i < sizeof(addressSlave); i++)
   {
@@ -592,6 +625,11 @@ void publishMqtt(String cmd, int port)
     // digitalWrite(pinStatusEthernet, HIGH);
     // digitalWrite(pinStatusMQTT, HIGH);
     // digitalWrite(pinStatusLight, HIGH);
+  }
+  else if(cmd=="statusBox")
+  {
+    outputObject["status"] = "alive";
+    outputObject["port"] = String(port);
   }
 
   outputObject.printTo(json, sizeof(json));
