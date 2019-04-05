@@ -1,5 +1,6 @@
 #include <SoftwareSerial.h>
 #include <Crc16.h>
+#include <Adafruit_SleepyDog.h>
 
 /*----------------( Constant variable )--------------------------*/
 
@@ -78,12 +79,14 @@ void setup()
   shareDataRS485.slaveAddress_unit8 = getAddress();
   Serial.print("#Get slave address = ");
   Serial.println(String(shareDataRS485.slaveAddress_unit8));
+  Watchdog.enable(5000);
 }
 
 /*--------------------( Loop )--------------------------*/
 
 void loop()
 {
+  Watchdog.reset();
   updateSensor();
   serialEvent();
   if (stringComplete)
@@ -326,4 +329,5 @@ void sendMessageRS485(String buf)
   RS485serial.print(temp);
   RS485serial.flush();
   digitalWrite(TxControlPin, RS485Recieve);
+  delay(10);
 }

@@ -12,6 +12,8 @@
 #include <ArduinoJson.h>
 #include "backup.h"
 #include <Wire.h>
+#include <QueueArray.h>
+#include <Adafruit_SleepyDog.h>
 /*----------------( Constant variable )--------------------------*/
 
 #define I2C_ADDRESS 0x50
@@ -27,9 +29,9 @@
 
 Crc16 crc;
 //IPAddress server(172, 18, 9, 157);
-const char* server = "nodereddev.kratos.co.th";  //name server mqtt broker
+const char *server = "nodereddev.kratos.co.th"; //name server mqtt broker
 EthernetClient ethClient;
-
+QueueArray<int> queueOpenBox;
 /*--------------------( Share variable )--------------------------*/
 
 static byte mac[6];          //keep mac address from EEPROM mac address (i2c)
@@ -52,6 +54,7 @@ bool statusEthernet = false;
 bool statusMqtt = false;
 bool toggleStatusLight = false;
 bool alltest_open = false;
+bool queueOpenBox_empty = true;
 unsigned int alltest_open_number = 1;
 unsigned long lastTimeAlltestOpen = 0;
 
@@ -91,9 +94,10 @@ void callback(char *topic, byte *payload, unsigned int length)
   {
     if (cmd == "open")
     {
-      commandToBox("openbox", port);
+      // commandToBox("openbox", port);
+      queueOpenBox.enqueue(port);
       //      publishMqtt("response", port);
-      Serial.println("Open box " + String(port));
+      // Serial.println("Open box " + String(port));
     }
     else if (cmd == "alltest_open")
     {
@@ -177,12 +181,19 @@ void setup()
   connectEthernet();
   delay(500);
   initSlave();
+  Watchdog.enable(5000);
 }
 
 /*--------------------( Loop )--------------------------*/
 
 void loop()
 {
+  Watchdog.reset();
+  if (!queueOpenBox.isEmpty())
+  {
+    commandToBox("openbox", queueOpenBox.dequeue());
+  }
+
   if (!statusEthernet)
   {
     blinkEthernetNotConnect();
@@ -227,7 +238,7 @@ void loop()
     alltest_open_number++;
     lastTimeAlltestOpen = millis();
   }
-  else if(!alltest_open)
+  else if (!alltest_open)
   {
     if (clearData == false)
     {
@@ -240,13 +251,13 @@ void loop()
       numberOfSlave++;
     }
   }
-  if(millis()-lastTimeToSendStatus>=60000)
+  if (millis() - lastTimeToSendStatus >= 60000)
   {
-    publishMqtt("statusBox",0);
-    lastTimeToSendStatus=millis();
+    publishMqtt("statusBox", 0);
+    lastTimeToSendStatus = millis();
   }
   client.loop();
-  delay(50);
+  delay(100);
 }
 
 /*--------------------<<<( Functions )>>>-------------------------*/
@@ -414,6 +425,10 @@ void serialEvent()
       {
         Serial.println("Input fail");
         inputString = "";
+        if (queueOpenBox_empty == false)
+        {
+          queueOpenBox_empty == true;
+        }
       }
       break;
     }
@@ -461,6 +476,7 @@ bool commandToBox(String buf, int number)
   if (buf.equalsIgnoreCase("openbox"))
   {
     sprintf(buffer, "%02d@00,O:00#", number);
+    Serial.println("openBox : " + number);
   }
   else if (buf.equalsIgnoreCase("clear"))
   {
@@ -476,6 +492,10 @@ bool commandToBox(String buf, int number)
 
 void sendMessageRS485(String buf)
 {
+  while (Serial1.available() > 0)
+  {
+    byte binDat = Serial1.read();
+  }
   char temp[20];
   buf.toCharArray(temp, buf.length() + 1);
   // Serial.println(String(temp));
@@ -487,6 +507,7 @@ void sendMessageRS485(String buf)
   Serial1.print(temp);
   Serial1.flush();
   digitalWrite(TxControlPin, RS485Recieve);
+  delay(10);
 }
 
 /*--------------------( reconnectMqtt )--------------------------*/
@@ -626,7 +647,7 @@ void publishMqtt(String cmd, int port)
     // digitalWrite(pinStatusMQTT, HIGH);
     // digitalWrite(pinStatusLight, HIGH);
   }
-  else if(cmd=="statusBox")
+  else if (cmd == "statusBox")
   {
     outputObject["status"] = "alive";
     outputObject["port"] = String(port);
